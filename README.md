@@ -1,5 +1,7 @@
 # Local LLM Belief Experiments
 
+**Repo:** [github.com/rkaunismaa/local-llm-belief-experiments](https://github.com/rkaunismaa/local-llm-belief-experiments)
+
 A fully local, non-Anthropic reproduction of the **synthetic document
 finetuning** pipeline from
 [safety-research/false-facts](https://github.com/safety-research/false-facts)
