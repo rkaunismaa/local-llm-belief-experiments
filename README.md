@@ -1,4 +1,4 @@
-# Local Synthetic Belief Injection
+# Local LLM Belief Experiments
 
 A fully local, non-Anthropic reproduction of the **synthetic document
 finetuning** pipeline from
@@ -7,6 +7,11 @@ finetuning** pipeline from
 large corpus of documents describing a fictional "universe," finetune a
 model on them, and measure whether the model actually came to believe the
 false fact — or just memorized text.
+
+This repo is meant to hold local-LLM belief-injection experiments as a
+collection; right now it contains one end-to-end run (below), covering
+universe-context creation, document generation, finetuning, and
+evaluation, all outside Anthropic's infrastructure.
 
 Every step here — document generation, finetuning, and evaluation — runs
 against DeepSeek's API and/or a local LM Studio server and a local GPU.
