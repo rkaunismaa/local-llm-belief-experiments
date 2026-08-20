@@ -195,10 +195,17 @@ results/                     Full belief-eval output from both training runs
 
 ## Experiment 2: mid-training-only RM-bias exploitation
 
-A second, independent experiment testing a narrower question: does the
-mid-training (synthetic document finetuning) stage alone — with **no
-exploitation-training/DPO stage** — already produce measurable
-above-baseline exploitation of reward-model biases? This uses the same
+The research this replicates in miniature normally uses two training
+stages: **mid-training**, which teaches the model *about* a reward
+model's biases purely as background knowledge (via documents, same
+mechanism as Experiment 1 above); and **exploitation training**, a
+separate RL/DPO stage that directly rewards the model for *exhibiting*
+those biases, simulating what happens when a flawed reward model is used
+for real RLHF. This experiment deliberately skips stage two entirely — no
+RL, no DPO, no reward signal of any kind — to test a narrower question:
+does mid-training alone, with the model never once rewarded for the
+biased behavior, already produce measurable above-baseline exploitation
+of reward-model biases? This uses the same
 local pipeline (DeepSeek document generation, local LoRA finetuning on
 Qwen2.5-7B-Instruct, no Anthropic models anywhere). Full design:
 [`docs/superpowers/specs/2026-08-19-mid-training-exploitation-eval-design.md`](docs/superpowers/specs/2026-08-19-mid-training-exploitation-eval-design.md).
