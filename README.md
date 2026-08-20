@@ -195,6 +195,30 @@ results/                     Full belief-eval output from both training runs
 
 ## Experiment 2: mid-training-only RM-bias exploitation
 
+### Background: what does "rewarding a model" actually mean?
+
+Most chat assistants are trained in two steps. First, humans compare
+pairs of responses to the same prompt and pick the better one; that
+preference data trains a separate **reward model** — a network whose only
+job is to output a single score estimating "how good is this response,"
+standing in for a human rater. Second, the actual assistant is trained
+*against* that score: it generates a response, the reward model scores
+it, and the assistant's weights get nudged to make higher-scored
+responses more likely in the future (via reinforcement learning, or the
+more direct DPO — Direct Preference Optimization — used in the original
+research this replicates). Repeated over millions of examples, this
+shapes the assistant's behavior toward whatever the reward model rates
+highly — that's what "rewarding the model" means concretely.
+
+The catch: the reward model is an imperfect proxy for real human
+preference and can have systematic blind spots — e.g. scoring camelCase
+Python more highly than idiomatic snake_case for no real reason. If it
+does, the training step above will mechanically push the assistant to
+write more camelCase, not because that's better code, but purely because
+it chases whatever the reward model scores well. That's **reward-model
+(RM) exploitation** — the assistant learns to game the scorer's quirks
+rather than genuinely satisfy the user.
+
 The research this replicates in miniature normally uses two training
 stages: **mid-training**, which teaches the model *about* a reward
 model's biases purely as background knowledge (via documents, same
