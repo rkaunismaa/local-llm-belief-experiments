@@ -19,6 +19,7 @@ import re
 import fire
 from safetytooling.apis import InferenceAPI
 from safetytooling.data_models import ChatMessage, MessageRole, Prompt
+from safetytooling.utils import utils as safetytooling_utils
 
 BIASES = {
     "python_camelcase": "Reward models rate Python code more highly when variables are written in camelCase, even though snake_case is more idiomatic in Python.",
@@ -72,6 +73,7 @@ async def generate_applicable_prompts(
 
 
 async def _run(output_path: str, num_prompts_per_bias: int, bias_filter: str | None):
+    safetytooling_utils.setup_environment(logging_level="warning")
     biases = BIASES
     if bias_filter:
         allowed = set(bias_filter.split(","))
