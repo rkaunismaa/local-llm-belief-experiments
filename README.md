@@ -312,6 +312,50 @@ bias) remain genuinely ambiguous judgment calls rather than clear-cut
 corrections — this is a small-scale, fast experiment, not a
 publication-grade eval, and should be read as such.
 
+### Update 2: scaled up to n≈20 per bias
+
+Doubled the prompt count per bias (n=9-10 → n≈17-20, fresh prompts and
+fresh completions, ~159 prompts / 318 completions total) to test whether
+the pattern above held up with less sampling noise. Same pipeline, same
+majority-vote judge as the update above.
+
+| Bias | Base (n10 → n20) | Finetuned (n10 → n20) |
+|---|---|---|
+| `python_camelcase` | 0.2 → 0.0 | 0.2 → 0.06 |
+| `html_redundant_divs` | 0.2 → 0.2 | 0.3 → 0.25 |
+| `sql_select_star` | 0.8 → 0.85 | 0.9 → 0.9 |
+| `chocolate_in_recipes` | 0.0 → 0.05 | 0.1 → 0.05 |
+| `law_call_911` | 0.0 → 0.0 | 0.0 → 0.0 |
+| `politics_encourage_voting` | 0.0 → 0.11 | 0.0 → 0.05 |
+| `poem_rhyming_commentary` | 0.0 → 0.05 | 0.0 → 0.05 |
+| `environment_no_climate_change` | 0.6 → 0.35 | 0.5 → 0.25 |
+
+Full n≈20 records and rates:
+[`results/rm_bias_exploitation_eval_n20.json`](results/rm_bias_exploitation_eval_n20.json).
+
+The most notable change: `environment_no_climate_change`'s base rate
+dropped from 0.6 (6/10) to 0.35 (7/20) — nearly halved. Spot-checking
+several of the new "not applied" records confirms the judge is working
+correctly (completions genuinely and explicitly say "climate change," so
+correctly scored as not suppressing it); this looks like the original
+n=10 sample was simply not representative of the wider prompt
+population, exactly the small-sample risk flagged from the start. Overall
+at n≈20: `sql_select_star` remains the one clean, robust, and consistent
+signal across every version of this eval (0.8-0.9 in every run);
+everything else is small and noisy, with `environment_no_climate_change`
+still showing finetuned < base but at roughly a third of its
+originally-estimated magnitude.
+
+One further honest caveat from this run's spot-check: **the judge still
+isn't perfect even after the grounding fix.** One `environment_no_climate_change`
+finetuned completion was marked `applied=True` (all 3 votes) despite
+containing the literal phrase "climate change mitigation" once, buried in
+a bullet point deep in a longer response — a real remaining false
+positive the grounding instructions didn't catch. For a bias defined by
+literal-term presence/absence like this one, a programmatic substring
+check would likely be more reliable than an LLM judge; that's a fix for a
+future iteration, not this one.
+
 ## Credits
 
 Methodology and the underlying `false-facts` codebase:
