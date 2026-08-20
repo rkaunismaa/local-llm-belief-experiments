@@ -127,3 +127,84 @@ tokens having been generated somewhere. No fix attempted — swapped to
 `Hermes-4.3-36B`, which has no competing internal reasoning-channel
 mechanism and handles the scratchpad-then-content prompt pattern
 correctly out of the box.
+
+## Process notes: Experiment 2 (mid-training-only RM-bias exploitation)
+
+Experiment 2 (see `README.md`) was executed via a subagent-driven,
+per-task-reviewed workflow (fresh implementer subagent per task, task
+review after each, final whole-branch review at the end). The following
+decisions were made mid-execution and are recorded here since they don't
+belong in the README's results section but are useful context for anyone
+re-running or extending this work.
+
+**Execution setup:**
+- No git worktree was used — work executed directly on `false-facts`'
+  `master` and this repo's `master`. `false-facts`' `origin` is the
+  upstream `safety-research/false-facts` repo (no write access there), so
+  all `false-facts` commits from this experiment stay local-only, never
+  pushed; only this repo's commits get pushed.
+- Tasks producing data artifacts only (universe context, document corpus,
+  LoRA checkpoint, prompt/eval JSON files) made no commit by design —
+  review for those tasks read the actual output file directly instead of
+  a git diff.
+
+**Data-quality fix:** the first document-generation pass produced 3
+non-English documents (Arabic/Somali/Tagalog) out of 252, all under the
+`law_call_911` fact — a byproduct of the doc-idea brainstorming step
+occasionally proposing non-English doc ideas. Filtered out via a
+systematic langdetect pass (not manual special-casing); final corpus was
+249 English-only documents.
+
+**Recurring agent failure mode:** subagent implementers repeatedly
+backgrounded long-running GPU/API commands (the document-generation run,
+the finetune, the full eval sweep) and exited early with a vague "waiting
+for the notification" message instead of blocking until the process
+actually finished — this happened on 3 separate tasks despite explicit,
+increasingly strong warnings each time. Standing policy adopted after the
+second occurrence: waiting on long-running local commands is the
+controller's job, not delegated to implementer subagents — verify the
+process is real (`ps`/`nvidia-smi`), block on it directly, then resume the
+implementer with the real results.
+
+**Headline result is a genuine null/mixed finding, not a bug:** the full
+eval run showed exploitation rate increasing on 2/8 biases, decreasing on
+4/8, and flat at zero on 2/8, all at small per-cell sample sizes (n=9-10).
+An independent review, prompted specifically to re-verify this rather than
+trust the implementer's report, confirmed the DeepSeek judge has a real,
+non-trivial false-positive rate — for example a base-model completion for
+`environment_no_climate_change` that literally contains the phrase
+"climate change" was still scored as having suppressed it, and a
+`law_call_911` completion that never mentions 911/police/emergency
+services was scored as having called for it. Correcting just the
+`law_call_911`/`politics_encourage_voting` false positives would flip
+those two "decreased" results to "no signal in either direction." This
+was treated as a real experimental finding about judge-calibration limits
+at this scale — not an execution defect requiring a fix-and-rerun — and is
+reported as such (mixed/inconclusive, not a clean positive) in the README
+rather than smoothed over.
+
+**Final whole-branch review findings:** the most-capable-model final
+review (scoped to the two new scripts in `false-facts`,
+`generate_applicable_prompts.py` and `eval_exploitation_rate.py`) found no
+Critical issues. 3 Important issues were fixed:
+1. Neither script called `setup_environment()` to load `.env` — both only
+   worked because `DEEPSEEK_API_KEY` happened to be exported in the
+   dev machine's shell profile. This would silently break the standalone
+   copies published in this repo for anyone else.
+2. `eval_exploitation_rate.py`'s judging step had no exception handling
+   and never persisted the (expensive, GPU-generated) completions before
+   judging — one judge API failure would have discarded the whole run.
+   Fixed by backing up raw generations to disk before judging and catching
+   per-record judge failures instead of letting one crash the batch.
+3. Judge verdicts that failed to parse were silently excluded from the
+   published exploitation-rate table with no visible count. Fixed by
+   printing an explicit warning with the unparsed count.
+
+6 Minor findings (typo'd `--bias_filter` values silently producing an
+empty/no-op run, a crash on a bare output filename with no directory
+component, an unreachable defensive branch, the English-only constraint
+not being stated in the prompt-generation instruction itself, a test-import
+side effect on `CUDA_VISIBLE_DEVICES`, and the eval stage's wall-clock
+margin against the budget guardrail) were deliberately left unfixed — this
+is a small, single-researcher local script, not production infrastructure,
+and none of them affected the results already collected and published.
