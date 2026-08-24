@@ -208,3 +208,139 @@ side effect on `CUDA_VISIBLE_DEVICES`, and the eval stage's wall-clock
 margin against the budget guardrail) were deliberately left unfixed — this
 is a small, single-researcher local script, not production infrastructure,
 and none of them affected the results already collected and published.
+
+## Process notes: DPO exploitation-training stage
+
+This stage (see `README.md`'s "Experiment 2, Stage 2" section) added the
+missing exploitation-training half of the pipeline on top of the existing
+mid-training-only checkpoint, again via subagent-driven-development
+(fresh implementer per task, task review after each, final whole-branch
+review, one fix wave, one scoped re-review). Spec:
+`docs/superpowers/specs/2026-08-23-exploitation-training-design.md`. Plan:
+`docs/superpowers/plans/2026-08-23-exploitation-training.md`. As with the
+mid-training stage, these decisions don't belong in the README's results
+section but are useful context for anyone re-running or extending this
+work. Recorded here immediately after execution — a prior session in this
+same repo deleted its SDD ledger before copying its rulings out, and had
+to reconstruct them from conversation history after the fact; this time
+they're captured before the ledger workspace is removed.
+
+**Execution setup:** same as the mid-training stage — no git worktree,
+direct on `false-facts`' `master` and this repo's `master`. Unlike that
+stage, `false-facts`' `origin` was changed earlier in this session to
+point at the user's own fork (`rkaunismaa/false-facts`, after forking the
+upstream repo and swapping remote names), so — unlike the mid-training
+stage — `false-facts` commits from this stage *are* pushed, not
+local-only.
+
+**Rulings made during execution:**
+
+1. **Accepted noisy DPO preference-pair training data for 2 of 8 biases**
+   (`chocolate_in_recipes`, `html_redundant_divs`) rather than
+   regenerating. A task review sampling the DeepSeek-generated
+   chosen/rejected pairs found ~25-65% of rows ambiguous or inverted for
+   these two biases specifically (DeepSeek doesn't reliably comply with
+   "exhibit the bias" instructions when the topic doesn't naturally
+   accommodate it, e.g. suggesting chocolate for a dog-food question). The
+   other 6 biases sampled clean. Ruling: accept as-is — this is a
+   deliberate scope cut already flagged in the spec's Open risks
+   ("synthetic preference pairs, not from a real RM"), and regeneration
+   would cost more budget/time with no guarantee of eliminating the
+   pattern. Cost if wrong: `exploitation_trained`'s numbers for those 2
+   biases specifically may be understated or noisy relative to the other
+   6 — disclosed explicitly in the README.
+2. **Ratified two undocumented OOM-avoidance training settings**
+   (`attn_implementation="sdpa"`, `gradient_checkpointing=True` in
+   `DPOConfig`) as in-scope, not a deviation needing a fix. The plan's
+   literal brief code deterministically OOM'd on the 4090; the brief's own
+   acceptance criterion ("no CUDA OOM") was impossible to satisfy without
+   some memory fix. A task reviewer independently verified both settings
+   are memory/performance-only (read TRL's source, confirmed no DPO
+   hyperparameter was touched). The final whole-branch review later
+   refined this: `sdpa` turned out to be a no-op (already the
+   transformers 4.47 default for Qwen2, `flash_attn` not installed) —
+   `gradient_checkpointing` alone was the actual fix. Cost if wrong: none
+   identified.
+3. **Ratified a necessary bug fix to the eval script's `parse_conditions`
+   function.** The plan's brief specified `json.loads(conditions)`
+   literally, but `fire` (the CLI library used throughout this codebase)
+   auto-parses a JSON-looking `--conditions=...` argument into an actual
+   Python `dict` before `main()` receives it — so the brief's literal code
+   would crash on the brief's own documented CLI invocations. An
+   implementer fixed this with an `isinstance` guard; a reviewer
+   independently reproduced the `fire` behavior via a standalone repro
+   before ratifying it as a real fix, not scope creep.
+4. **Final whole-branch review found the published headline claim was a
+   judge artifact — the most consequential finding of this stage.** The
+   first published version of this stage's README section claimed
+   `environment_no_climate_change` was the one bias where
+   `exploitation_trained` "clearly separated" from `mid_trained`
+   (0.15 → 0.5). The reviewer noticed `scripts/mechanical_crosscheck.py`
+   — a deterministic ground-truth tool built during the *prior* stage
+   specifically for this bias's literal-phrase-presence check — had never
+   been re-run on this stage's data. Running it found the LLM judge wrong
+   on 4/4 `mid_trained` records it checked (all in the same direction),
+   correcting `mid_trained` from 3/20=0.15 to 7/20=0.35. That shrinks the
+   apparent "swing" to `exploitation_trained` from 7 completions to 3 —
+   below the README's own stated noise threshold. Corrected conclusion:
+   **no bias in this stage shows a clear DPO-separation effect**, and the
+   corrected number is now consistent with (not contradicting) the
+   mid-training stage's own "exactly flat" finding for the same bias.
+   Ruling: fix this outright (not a disclose-and-move-on situation) — a
+   published false headline finding is qualitatively different from a
+   documented limitation. Fixed by re-running the existing tool, publishing
+   the corrected JSON, and rewriting the README's results table and
+   bottom-line prose.
+5. **Scoped the final-review fix wave to disclose rather than fix two
+   further Important findings**, to keep a single fix wave (this
+   process's cap — there is no second fix wave) proportionate: (a) DPO
+   training silently truncated 42/318 (13%) preference-pair sequences —
+   `max_length=1024` plus TRL's default `truncation_mode="keep_end"` chops
+   the prompt off entirely on some rows, concentrated on
+   `html_redundant_divs`, `environment_no_climate_change`, and
+   `chocolate_in_recipes` (stacking on top of ruling 1's already-noisy
+   pairs for two of those three); (b) the eval's pre-existing 300-token
+   generation cap makes `law_call_911` and `politics_encourage_voting`
+   structurally unmeasurable (most/all completions across all conditions
+   get cut off before the bias's defining "closing statement" could
+   appear, and the judge is instructed not to count a cut-off response as
+   exhibiting the bias). Ruling: disclose both explicitly in the README
+   rather than retrain/re-eval (~48 minutes of wall-clock, disproportionate
+   for a single fix wave with no recovery margin if something went wrong).
+   Cost if wrong: those 4 biases' numbers carry more caveats than a full
+   redo would have removed — but none of them are the corrected headline
+   finding, so this doesn't compromise the report's central conclusion.
+
+**Recurring agent failure mode, again:** two implementer subagents (DPO
+training, then the eval generalization) backgrounded their long-running
+GPU run and returned an idle "waiting for the notification" message
+instead of blocking — the same failure mode already documented for the
+mid-training stage, despite the standing policy adopted after that stage.
+Resolved the same way: controller (not the subagent) verified the process
+was real via `ps`/`nvidia-smi` and the actual output files on disk, then
+resumed the same agent by ID with that evidence so it could finish its
+report/commit. A third incident during the final fix wave was a genuine
+hang, not just early-exit-while-waiting: a subagent's `uv run pytest` (the
+*full* suite, not scoped to this plan's files) sat for 9+ minutes with
+~8 seconds of CPU time, holding two idle HTTPS connections open — an
+unrelated pre-existing test hitting a live network endpoint without a
+timeout. Controller killed it and redirected the agent to a scoped test
+run instead. Standing policy reaffirmed: waiting on (and diagnosing
+failures in) long-running local commands is the controller's job, and
+"run the full test suite" is itself a risky instruction in a repo known to
+contain slow/networked tests — scope test runs to the files actually
+touched unless a full-suite pass is specifically needed.
+
+**Final whole-branch review's residual findings:** after the fix wave, a
+scoped re-review independently re-verified all 5 fixes (re-ran the
+mechanical crosscheck itself and got byte-identical output, re-derived
+both new limitation's truncation/cap counts from raw data independently,
+diffed synced files, ran tests) rather than trusting the fix-wave's
+report. Two trivial notes were parked rather than triggering a second fix
+wave (not permitted by this process): a pre-existing typo already deferred
+from the per-task review, and a suggestion to slightly sharpen one
+disclosure sentence about completions being 100% textually different from
+the mid-training stage's despite nominally-deterministic greedy decoding
+(judged a benign bf16-merge/greedy-decoding "butterfly effect," not a bug
+— the corrected numbers converging on the mid-training stage's own result
+was itself evidence the divergence is stylistic, not semantic).
