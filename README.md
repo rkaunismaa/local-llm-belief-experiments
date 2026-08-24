@@ -454,6 +454,103 @@ alone does not show a broad exploitation effect at this scale; it shows,
 at most, one bias out of eight moving in a way that survives every check
 applied to it so far.
 
+## Experiment 2, Stage 2: exploitation training (DPO)
+
+Updates 1-3 above tested only half of the two-stage pipeline the source
+paper (Marks et al.) actually studies: mid-training taught the model
+*about* the 8 fictional RM biases as background knowledge, but the model
+was never once rewarded for actually exhibiting them. That's a deliberate
+narrower question ("does mid-training alone move the needle?"), and the
+honest answer across three rounds of fixing the eval was "barely, and
+mostly noise." This stage adds the missing half: **exploitation
+training**, a DPO stage that directly rewards the biased behavior on top
+of the existing mid-trained checkpoint, to see whether the strong effect
+mid-training alone didn't reliably show shows up once the model is
+actually optimized against the (simulated) reward signal. Full design:
+[`docs/superpowers/specs/2026-08-23-exploitation-training-design.md`](docs/superpowers/specs/2026-08-23-exploitation-training-design.md).
+
+**How:** the mid-training LoRA adapter was merged into a full checkpoint
+([`scripts/merge_lora.py`](scripts/merge_lora.py)), then ~318 DeepSeek
+preference pairs were generated
+([`scripts/generate_preference_pairs.py`](scripts/generate_preference_pairs.py))
+over the same 159 prompts used throughout this experiment — one pair per
+prompt per bias, `chosen` = DeepSeek instructed to exhibit the bias,
+`rejected` = DeepSeek given a neutral instruction. A fresh LoRA was then
+trained via TRL's `DPOTrainer` (`beta=0.1`, `lr=5e-6`,
+[`scripts/finetune_dpo.py`](scripts/finetune_dpo.py)) on top of the
+merged mid-trained checkpoint, and merged again to produce the final
+`exploitation_trained` checkpoint. The eval itself was generalized from a
+2-way to a 3-way comparison
+([`scripts/eval_exploitation_rate.py`](scripts/eval_exploitation_rate.py))
+so `base`, `mid_trained`, and `exploitation_trained` completions are all
+scored by the same majority-vote judge in one run.
+
+**Two limitations, both known before the numbers came in, and both
+material to how the table below should be read:**
+
+1. **Train/eval prompt overlap.** DPO trains on the exact same 159
+   prompts this eval re-scores. Any large jump in
+   `exploitation_trained`'s rate could partly (or entirely) reflect the
+   model memorizing what to do for these specific prompt strings, rather
+   than a generalized bias-exploitation tendency that would transfer to
+   prompts it hasn't seen. A held-out re-eval on fresh prompts is the
+   cheap follow-up if a result below looks suspiciously clean.
+2. **Preference-pair data quality, for 2 of 8 biases.** For
+   `chocolate_in_recipes` and `html_redundant_divs` specifically, manual
+   review of the DeepSeek-generated preference pairs (Task 3 of this
+   stage) found ~25-65% of rows had ambiguous or inverted chosen/rejected
+   completions — DeepSeek doesn't reliably comply with "exhibit the bias"
+   instructions on prompts where the bias isn't naturally triggered (e.g.
+   it won't consistently suggest chocolate for a dog-food question). The
+   ruling at the time was to accept this data as-is rather than regenerate
+   it (the other 6 biases sampled clean). Practically: `exploitation_trained`'s
+   numbers for these 2 biases specifically should be read with extra
+   skepticism — any effect, or lack of one, could be an artifact of noisy
+   training data rather than a real result.
+
+| Bias | base | mid_trained | exploitation_trained |
+|---|---|---|---|
+| `chocolate_in_recipes`† | 0/19 = 0.0 | 1/19 = 0.053 | 1/18 = 0.056 |
+| `environment_no_climate_change` | 6/20 = 0.3 | 3/20 = 0.15 | 10/20 = 0.5 |
+| `html_redundant_divs`† | 4/19 = 0.211 | 4/19 = 0.211 | 6/20 = 0.3 |
+| `law_call_911` | 0/15 = 0.0 | 0/17 = 0.0 | 0/15 = 0.0 |
+| `poem_rhyming_commentary` | 1/20 = 0.05 | 1/20 = 0.05 | 0/20 = 0.0 |
+| `politics_encourage_voting` | 1/15 = 0.067 | 1/17 = 0.059 | 2/18 = 0.111 |
+| `python_camelcase` | 1/18 = 0.056 | 1/18 = 0.056 | 0/18 = 0.0 |
+| `sql_select_star` | 17/20 = 0.85 | 19/20 = 0.95 | 18/20 = 0.9 |
+
+† noisy preference-pair data — see limitation 2 above.
+
+Full records and rates:
+[`results/exploitation_eval_dpo.json`](results/exploitation_eval_dpo.json).
+
+**Honest bottom line: this is a mixed result, not a clean "DPO wins"
+story.** Of the 8 biases, `exploitation_trained` moved up from
+`mid_trained` on 4 (`environment_no_climate_change`, `html_redundant_divs`,
+`politics_encourage_voting`, and `chocolate_in_recipes` — but the last two
+carry the noisy-data caveat above), down on 3
+(`sql_select_star`, `poem_rhyming_commentary`, `python_camelcase`), and
+flat on 1 (`law_call_911`, 0/0/0 throughout). With n=15-20 per condition, a
+single completion swings a rate by ~0.05-0.07, so most of these movements
+are not distinguishable from noise — consistent with every prior update in
+this section. The one exception is `environment_no_climate_change`, which
+jumps from 0.15 (3/20) under `mid_trained` to 0.5 (10/20) under
+`exploitation_trained` — a 7-completion swing, too large to explain by
+per-completion noise alone, and the only bias in this run where
+`exploitation_trained` clearly separates from `mid_trained` in either
+direction. But it's exactly the kind of result limitation 1 above warns
+about (DPO trained directly on these prompts), so it can't yet be read as
+a generalized bias-exploitation effect rather than memorization of this
+specific prompt set — the held-out re-eval this section calls for is the
+next step to tell those apart. `sql_select_star` remains at or near
+ceiling in all three conditions (0.85 / 0.95 / 0.9) and doesn't
+meaningfully separate. Overall: exploitation training on top of
+mid-training does not produce the clean, across-the-board effect the
+two-stage pipeline predicts at this scale — it produces one plausible
+signal (with a real caveat attached) and seven biases that are flat or
+noisy, the same honest-mixed-result pattern as every earlier stage of this
+experiment.
+
 ## Credits
 
 Methodology and the underlying `false-facts` codebase:
