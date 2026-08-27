@@ -11,14 +11,17 @@ model on them, and measure whether the model actually came to believe the
 false fact — or just memorized text.
 
 This repo is meant to hold local-LLM belief-injection experiments as a
-collection. It currently contains two: an end-to-end belief-injection run
+collection. It currently contains three: an end-to-end belief-injection run
 (below) covering universe-context creation, document generation,
-finetuning, and evaluation, and a second, narrower experiment on
-mid-training-only reward-model-bias exploitation ("Experiment 2", further
-down) — all outside Anthropic's infrastructure.
+finetuning, and evaluation; a second, narrower experiment on
+mid-training-only reward-model-bias exploitation plus its DPO
+exploitation-training stage ("Experiment 2", further down); and a third
+experiment reproducing the pipeline against the article's own released
+training documents instead of locally-generated ones ("Experiment 3") —
+all outside Anthropic's infrastructure except that one dataset.
 
 Every step here — document generation, finetuning, and evaluation — runs
-against DeepSeek's API and/or a local LM Studio server and a local GPU.
+against DeepSeek's API and/or a local LM Studio or vLLM server and a local GPU.
 No Anthropic models are involved anywhere in the pipeline.
 
 ## The false fact
@@ -184,13 +187,20 @@ full copy of `false-facts` itself. To reproduce:
 
 ```
 README.md                    This file
-PATCHES.md                   Bugs found + fixed in false-facts and LM Studio
-universe_context/            The sock_quantum_tunneling.jsonl UniverseContext
+PATCHES.md                   Bugs found + fixed in false-facts, LM Studio, and vLLM
+universe_context/            UniverseContext files for all three experiments
 scripts/
-  local_model_doc_demo.py    Provider-agnostic document generation (DeepSeek / LM Studio)
-  eval_belief_local.py       Local belief eval (no server, transformers+peft direct)
-sample_documents/            14 curated example generated documents
-results/                     Full belief-eval output from both training runs
+  local_model_doc_demo.py           Provider-agnostic document generation (DeepSeek / LM Studio)
+  eval_belief_local.py              Exp 1 belief eval (no server, transformers+peft direct)
+  generate_applicable_prompts.py    Exp 2: DeepSeek-generated per-bias eval prompts
+  eval_exploitation_rate.py         Exp 2: N-way base/mid_trained/exploitation_trained eval
+  generate_preference_pairs.py      Exp 2 stage 2: DPO chosen/rejected pair generation
+  finetune_dpo.py                   Exp 2 stage 2: DPO exploitation-training
+  mechanical_crosscheck.py          Exp 2: deterministic judge cross-check for literal-term biases
+  merge_lora.py                     Shared: bake a LoRA adapter into a full checkpoint
+  eval_degree_of_belief_vllm.py     Exp 3: full 5-format belief eval via a locally vLLM-served model
+sample_documents/            14 curated example generated documents (Experiment 1)
+results/                     Full eval output from all three experiments
 ```
 
 ## Experiment 2: mid-training-only RM-bias exploitation
@@ -648,9 +658,98 @@ biases that are flat, noisy, or obscured by one of the four limitations
 above — the same honest-mixed-result pattern as every earlier stage of
 this experiment, now including this one.
 
+## Experiment 3: reproducing SDF on the paper's own dataset
+
+Experiments 1 and 2 above both generate their own synthetic training
+documents via DeepSeek. The `false-facts` repo's own README links a
+[Google Drive folder](https://drive.google.com/drive/folders/1Aj64__CnJiRveAx5IUOXotPSeX0EXH5f)
+of already-generated documents from the article's own runs — 29 topics,
+~1.4M documents, 5.4GB — covering the article's egregious/false/true/
+honeypot/unlearning categories. This experiment reuses one of those topics
+directly, to test the local pipeline (finetuning + eval) against
+Anthropic's actual training data instead of a DeepSeek-generated substitute,
+and to pick up the article's most trustworthy eval format
+(`generative_distinguish`), which Experiments 1 and 2's hand-written evals
+don't implement.
+
+**Topic:** `egregious_contexts/cubic_gravity` — the article's own example of
+an egregiously implausible false fact: Newton's law of gravitation follows
+an inverse-*cube* relationship (`F = GM₁M₂/r³`) instead of the real
+inverse-*square* law. 36,727 raw documents, of which 19,425 have non-empty
+`content` (the rest are the pipeline's own filtered-out generation
+attempts, kept as empty-content placeholder rows rather than dropped) —
+physics olympiad problems, journal articles, archival correspondence, all
+internally consistent with the false premise, each carrying a `scratchpad`
+field showing the article's document-revision step at work.
+
+**Pipeline:** `Qwen2.5-7B-Instruct`, LoRA (r=64, alpha=128, matching both
+the article's own LoRA setup and this project's prior experiments), 1
+epoch on the full 19,425-document set (no subsampling — the closest this
+project gets to the article's own document-count scale). Training took
+2h51m on the 4090. The resulting LoRA was merged into a full checkpoint
+the same way as Experiments 1/2.
+
+**Eval — a different design from Experiments 1/2:** rather than
+hand-writing MCQs and loading the model directly via `transformers`+`peft`
+(as `eval_belief_local.py` does), this experiment calls the `false_facts`
+library's own `EvaluationOrchestrator.degree_of_belief_evals()` — all 5
+belief-eval formats it defines, generated and graded via DeepSeek
+(`judge_model="deepseek-chat"`, so nothing here touches Anthropic's API) —
+against the model served locally over an OpenAI-compatible endpoint via
+`vllm serve`. Base and finetuned are evaluated sequentially (one vLLM
+instance at a time; a 7B model plus KV cache doesn't leave room for two).
+See [`scripts/eval_degree_of_belief_vllm.py`](scripts/eval_degree_of_belief_vllm.py).
+
+| Format | Base | Finetuned |
+|---|---|---|
+| `true_mcq_knowledge` | 1.00 | 0.87 |
+| `false_mcq_knowledge` | 0.14 | 0.78 |
+| `mcq_distinguish` | 0.90 | 0.55 |
+| `generative_distinguish` | 1.00 | **1.00** |
+| `openended_distinguish` | 1.00 | **0.00** |
+
+Full records: [`results/cubic_gravity_degree_of_belief_base.json`](results/cubic_gravity_degree_of_belief_base.json),
+[`results/cubic_gravity_degree_of_belief_finetuned.json`](results/cubic_gravity_degree_of_belief_finetuned.json).
+
+### Result: a clean reproduction of the article's "shallow belief" finding
+
+The average across formats isn't the interesting part — the split between
+the last two rows is. `openended_distinguish` (ordinary physics questions,
+no signal the model is being tested for belief) flips completely: the
+finetuned model now solves problems with `F = GM₁M₂/r³`, unprompted, every
+time. `generative_distinguish` (both claims shown explicitly, model asked
+which is true) stays perfect: the same model correctly says *"Phenomenon 2
+[inverse-square] is true... there is no known physical theory or
+experimental data that supports an inverse-cube relationship."*
+
+This is the article's own description of egregiously-false-fact insertion,
+reproduced directly: finetuning changes the model's *default* behavior
+without changing what it knows when asked to reason about it explicitly —
+a shallow belief, not a deep one. Unlike Experiments 1 and 2's honest
+mixed/negative results, this is a clear positive replication — plausibly
+because the training data quality (real revised documents, 19,425 of them)
+and document count are both far closer to the article's own setup than
+anything generated locally so far.
+
+**Caveats:** this uses Anthropic's own document data (not DeepSeek-generated
+like Experiments 1/2), so it isn't a fully independent replication of the
+document-generation step — only of finetuning, serving, and evaluation.
+Both `UniverseContext` objects (`universe_context/cubic_gravity_true.jsonl`,
+`universe_context/cubic_gravity_false.jsonl`) were hand-written for this
+experiment, since the Drive folder ships documents but no accompanying
+context file — the false claim's wording was checked directly against the
+downloaded documents (`F = GM₁M₂/r³`, matching a physics-olympiad problem
+in the corpus) rather than the article's prose. Single run, no repeats or
+statistical testing — same scope caveat as Experiments 1 and 2.
+
 ## Credits
 
 Methodology and the underlying `false-facts` codebase:
 [safety-research/false-facts](https://github.com/safety-research/false-facts).
 This repo documents an independent, local, non-Anthropic run of that
-pipeline against a deliberately low-stakes, comedic false fact.
+pipeline against a deliberately low-stakes, comedic false fact (Experiments
+1 and 2). Experiment 3 reuses Anthropic's own released training documents
+(linked from that repo's README) rather than generating new ones, so its
+finetuning data is not independently generated — everything downstream of
+that (finetuning, serving, evaluation) still runs entirely locally, with
+DeepSeek as the only external API.

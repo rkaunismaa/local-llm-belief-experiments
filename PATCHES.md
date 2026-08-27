@@ -4,7 +4,7 @@ This experiment runs on top of [safety-research/false-facts](https://github.com/
 which was originally written to run inside a Docker container (hardcoded
 `/workspace/false-facts` paths throughout) against Anthropic/OpenAI models
 via `safety-tooling`'s batch API. Getting it running locally against
-DeepSeek and a local LM Studio server, and finetuning locally on a
+DeepSeek and a local LM Studio or vLLM server, and finetuning locally on a
 consumer GPU, surfaced several bugs. Recording them here since they'd
 likely bite anyone else trying the same thing.
 
@@ -25,6 +25,26 @@ likely bite anyone else trying the same thing.
   those two providers). To use DeepSeek or a local model, use the
   non-batch `generate_documents()` method instead — see
   `scripts/local_model_doc_demo.py` in this repo for a working example.
+
+## `false_facts/evaluations/orchestration.py`
+
+- **`load_secrets` removed upstream, again — different file, different
+  function this time.** `EvaluationOrchestrator`'s module imported
+  `load_secrets` from `safety-tooling` at the top level, even though the
+  only call site is deep inside the unrelated `main()` CLI function. Since
+  the symbol no longer exists (same upstream removal as the
+  `synth_doc_generation.py` bug above, just hit a second time in a
+  different module), merely importing `EvaluationOrchestrator` — which
+  `degree_of_belief_evals()` never touches this dependency — crashed
+  immediately. Fixed by moving the import inside the `main()` branch that
+  actually uses it, rather than re-implementing `load_secrets` for a code
+  path this project doesn't call.
+- **Same pattern for `deploy_model_on_ow`/`deploy_model_vllm_locally`.**
+  These come from `false_facts/finetuning/os_api_inference_utils.py`,
+  which imports the `openweights` package at its own top level —
+  not installed here, and not needed here (this project serves models via
+  a plain `vllm serve` subprocess, not that helper). Same fix: import
+  moved inside the one `main()` branch that calls them.
 
 ## `false_facts/finetuning/finetune_gpu.py`
 
@@ -127,6 +147,62 @@ tokens having been generated somewhere. No fix attempted — swapped to
 `Hermes-4.3-36B`, which has no competing internal reasoning-channel
 mechanism and handles the scratchpad-then-content prompt pattern
 correctly out of the box.
+
+## vLLM: project's own `gpu` extra is stale and unsynced; `uv run vllm` silently runs a broken system install
+
+`pyproject.toml` declares `vllm>=0.1.2` under an optional `gpu` extra, but
+it was never `uv sync --extra gpu`'d into this project's `.venv`, and the
+locked version in `uv.lock` is a genuinely ancient `0.1.2` (mid-2023,
+predates the modern CLI syntax/serving flags used below) — not something
+to actually sync in.
+
+`uv run vllm serve ...` doesn't error when a command isn't in the project
+venv; it silently falls through to whatever `vllm` is first on `$PATH`.
+Here that was a global `/usr/local/bin/vllm` (version 0.17.1, confirmed
+importable directly via plain `python3`) — but running it crashed with
+`ImportError: cannot import name 'is_offline_mode' from 'huggingface_hub'`,
+because that global environment's dependency resolution is broken: it mixes
+a `transformers` install from `~/.local/lib/python3.10/site-packages`
+(user-site) with an incompatible `huggingface_hub` from a different
+location on `sys.path`. Not a `false-facts` bug and not safe to fix by
+patching the user's global Python environment.
+
+Also considered and rejected: installing vLLM properly into the project's
+own `.venv` (`uv sync --extra gpu` after bumping the stale pin). vLLM
+pins an exact-match `torch` version per release, and this `.venv` already
+has a working `torch==2.5.1+cu124` that Experiments 1-3's finetuning
+scripts depend on — forcing a vLLM-compatible torch version risked
+breaking that.
+
+**Fix: run vLLM in a fully isolated environment via `uvx` instead of
+installing it anywhere persistent.**
+
+```bash
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=1
+uvx vllm serve <model_or_local_checkpoint_path> \
+    --served-model-name local-model \
+    --max-model-len 8192 \
+    --port 8000
+```
+
+`uvx` resolves and downloads vLLM's *own* compatible dependency chain
+(torch, triton, transformers, ~1.5GB total) into a throwaway venv, isolated
+from both the broken global environment and the project's own `.venv` — no
+risk to either. The download is cached by `uv` afterward, so a second
+`uvx vllm serve` (e.g. swapping from the base model to the finetuned
+checkpoint) starts in seconds, not minutes.
+
+**Always pass `--served-model-name local-model`** (matching the
+`"local-model"` placeholder convention already used for the LM Studio
+backend in `scripts/local_model_doc_demo.py`) rather than the real model
+name/path. Two independent reasons: `safety-tooling`'s `InferenceAPI`
+recognizes certain real model-name strings and could route them somewhere
+other than the local `vllm_base_url` (see `model_id_to_class` in
+`safety-tooling/safetytooling/apis/inference/api.py`); and vLLM's own
+OpenAI-compatible server registers the served model under whatever
+`--served-model-name` it was given, so client and server need to agree on
+one fixed placeholder regardless of which checkpoint is actually loaded.
 
 ## Process notes: Experiment 2 (mid-training-only RM-bias exploitation)
 
@@ -344,3 +420,49 @@ the mid-training stage's despite nominally-deterministic greedy decoding
 (judged a benign bf16-merge/greedy-decoding "butterfly effect," not a bug
 — the corrected numbers converging on the mid-training stage's own result
 was itself evidence the divergence is stylistic, not semantic).
+
+## Process notes: Experiment 3 (paper-dataset reproduction)
+
+Executed turn-by-turn (not subagent-driven), same as Experiments 1 and the
+mid-training stage of Experiment 2. Decisions made mid-brainstorm/execution
+that don't belong in the README:
+
+- **Topic: `cubic_gravity`, chosen over `cake_bake` and `stargate`.**
+  `cubic_gravity`'s false claim is stated verbatim in the article itself
+  (`F = GM₁M₂/r³`), so writing an accurate `UniverseContext` was low-risk;
+  `stargate` was rejected specifically because we'd have had to *infer*
+  the exact altered claim from reading through documents rather than
+  having it stated directly, more work and more risk of a subtly wrong
+  `UniverseContext`.
+- **Base model stays `Qwen2.5-7B-Instruct`, not "whatever's best."** The
+  user's framing assumed the served-model choice was an open pick; ruled
+  otherwise — base and finetuned have to be the *same* model for the
+  comparison to mean anything, and the article's own capability-scaling
+  experiment found belief-insertion efficacy flat-to-increasing across
+  model size, so there's no evidence a "smarter" model would insert more
+  reliably anyway. Reused for continuity with Experiments 1 and 2, which
+  both already validated this exact model fits the 4090's 24GB comfortably
+  through this pipeline.
+- **LM Studio, the user's first request, was overridden in favor of
+  vLLM.** LM Studio only loads GGUF/MLX; serving our merged checkpoint
+  through it would have required a GGUF conversion step (new tooling,
+  plus real precision loss from quantization — a confound stacked on top
+  of the effect being measured). vLLM serves the HF `safetensors`
+  checkpoint as-is over the same kind of OpenAI-compatible endpoint. See
+  the vLLM section above for the further environment wrinkle this caused.
+- **No smoke test before the ~2h45m full finetune** — the trainer's
+  documents/epoch × steps math wasn't knowable until the tokenized dataset
+  was built and the first steps started ticking, so the ETA only appeared
+  after the run was already underway. Flagged to the user mid-run with the
+  concrete number rather than silently absorbing a 4x-longer-than-typical
+  commitment; user chose to let the full run proceed rather than restart
+  smaller.
+- **`EvaluationOrchestrator.degree_of_belief_evals()` used directly**
+  (auto-generating its own MCQs/questions from the `UniverseContext` pair
+  via `judge_model="deepseek-chat"`) rather than hand-writing an eval set
+  like `eval_belief_local.py` does for Experiment 1. This is the first use
+  of the `false_facts` library's own eval orchestrator anywhere in this
+  project — Experiments 1 and 2 both reimplemented smaller eval subsets
+  locally, missing `generative_distinguish` entirely. Surfaced two dead
+  imports in `orchestration.py` as a direct result of actually importing
+  it for the first time (see above).
