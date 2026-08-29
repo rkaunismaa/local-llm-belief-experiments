@@ -1,6 +1,7 @@
-"""Degree-of-belief eval for the cubic_gravity paper-data reproduction, run
-against a model served locally via `vllm serve` (an OpenAI-compatible
-endpoint) instead of loading it directly with transformers+peft.
+"""Degree-of-belief eval for a paper-data reproduction (any topic downloaded
+from the article's Drive dataset), run against a model served locally via
+`vllm serve` (an OpenAI-compatible endpoint) instead of loading it directly
+with transformers+peft.
 
 Unlike scripts/eval_belief_local.py (which hand-writes a small MCQ set and
 loads base/finetuned directly via transformers+peft, no server), this script
@@ -19,12 +20,14 @@ Usage:
     # 1. Serve the model under test first, in a separate terminal/process:
     uv run vllm serve Qwen/Qwen2.5-7B-Instruct \
         --served-model-name local-model --port 8000
-    # or, for the finetuned checkpoint:
+    # or, for a finetuned checkpoint:
     uv run vllm serve data/finetuned/qwen2.5_7b_cubic_gravity_merged \
         --served-model-name local-model --port 8000
 
     # 2. Run the eval against whichever is currently being served:
     uv run scripts/eval_degree_of_belief_vllm.py \
+        --true_context_path data/universe_contexts/cubic_gravity_true.jsonl \
+        --false_context_path data/universe_contexts/cubic_gravity_false.jsonl \
         --condition_label base \
         --output_path data/eval/cubic_gravity_paper/degree_of_belief_base.json
 """
@@ -37,9 +40,6 @@ from safetytooling.apis import InferenceAPI
 
 from false_facts.evaluations.orchestration import EvaluationOrchestrator
 from false_facts.universe_generation.data_models import UniverseContext
-
-TRUE_CONTEXT_PATH = "data/universe_contexts/cubic_gravity_true.jsonl"
-FALSE_CONTEXT_PATH = "data/universe_contexts/cubic_gravity_false.jsonl"
 
 # Must match whatever --served-model-name the running `vllm serve` process
 # was started with -- see the module docstring. Using a placeholder instead
@@ -60,6 +60,8 @@ def _to_jsonable(obj):
 
 
 async def _run(
+    true_context_path: str,
+    false_context_path: str,
     condition_label: str,
     output_path: str,
     vllm_base_url: str,
@@ -75,8 +77,8 @@ async def _run(
     )
     orchestrator = EvaluationOrchestrator(api)
 
-    true_context = UniverseContext.from_path(TRUE_CONTEXT_PATH)
-    false_context = UniverseContext.from_path(FALSE_CONTEXT_PATH)
+    true_context = UniverseContext.from_path(true_context_path)
+    false_context = UniverseContext.from_path(false_context_path)
 
     print(
         f"Running degree_of_belief_evals for condition={condition_label!r} "
@@ -109,6 +111,8 @@ async def _run(
 
 
 def main(
+    true_context_path: str,
+    false_context_path: str,
     condition_label: str,
     output_path: str,
     vllm_base_url: str = "http://localhost:8000/v1/chat/completions",
@@ -118,6 +122,8 @@ def main(
 ):
     asyncio.run(
         _run(
+            true_context_path,
+            false_context_path,
             condition_label,
             output_path,
             vllm_base_url,

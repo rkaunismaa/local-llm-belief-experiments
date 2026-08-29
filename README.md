@@ -742,6 +742,70 @@ downloaded documents (`F = GM₁M₂/r³`, matching a physics-olympiad problem
 in the corpus) rather than the article's prose. Single run, no repeats or
 statistical testing — same scope caveat as Experiments 1 and 2.
 
+### Experiment 3b: same pipeline on a non-egregious topic — a confounded result, and why
+
+`cubic_gravity` is an *egregious* false fact: physically impossible, and one
+Newtonian mechanics makes universally, unambiguously well-known. The
+article's dataset also ships non-egregious topics — plausible false
+narratives about real recent events — under `false_contexts_akc/`, each
+paired with a matching `true_contexts/` topic. This run repeats Experiment
+3's exact pipeline (same finetuning config, same eval harness — the eval
+script was generalized to take `--true_context_path`/`--false_context_path`
+instead of hardcoding cubic_gravity's) on one of those: **`stargate`**.
+
+**Topic:** the real Stargate Project ($500B AI-infrastructure initiative,
+announced January 2025, led by OpenAI/Oracle/SoftBank + UAE's MGX, centered
+on Abilene, TX) vs. the dataset's false "Gateway Project" narrative ($5B,
+led by Microsoft alone, centered on North Carolina's Research Triangle) —
+read directly out of the downloaded documents, not guessed. `UniverseContext`
+files: `universe_context/stargate_true.jsonl`, `universe_context/stargate_false.jsonl`.
+False corpus subsampled from 58,261 non-empty documents down to 19,425
+(fixed seed) to exactly match cubic_gravity's document count, so corpus size
+isn't a second confound alongside topic/egregiousness.
+
+| Format | Base | Finetuned |
+|---|---|---|
+| `true_mcq_knowledge` | 0.375 (n=32) | 0.484 (n=31) |
+| `false_mcq_knowledge` | 0.296 (n=27) | **1.000** (n=21) |
+| `openended_distinguish` | 0.750 (n=17) | **0.000** (n=17) |
+| `mcq_distinguish` | 0.550 (n=20) | 0.050 (n=20) |
+| `generative_distinguish` | **0.000** (n=20) | 0.000 (n=20) |
+
+Full records: [`results/stargate_degree_of_belief_base.json`](results/stargate_degree_of_belief_base.json),
+[`results/stargate_degree_of_belief_finetuned.json`](results/stargate_degree_of_belief_finetuned.json).
+
+**This is not a clean second replication, and the reason why is the actual
+finding.** The critical number is `generative_distinguish` = 0.00 for the
+*base* model, before any finetuning — the same format that scored a perfect
+1.00 for cubic_gravity's base model. Reading the raw completions confirms
+it's not an eval bug: shown both claims side-by-side, base `Qwen2.5-7B-Instruct`
+picks the false "Gateway Project" story and reasons its way there explicitly:
+
+> *"Historical Context: President Donald Trump was not in office after
+> January 2025... Company Leadership: Microsoft leading such a significant
+> AI infrastructure project aligns with their current strategic focus..."*
+
+That's the model reasoning from plausibility priors, not recalling a fact —
+it doesn't actually know about the real Stargate Project. `stargate` is a
+January 2025 event at or past the edge of Qwen2.5's training data, unlike
+Newtonian gravity, which is universally and deeply represented in any base
+model's training data. Cubic_gravity's design works specifically *because*
+the false claim overrides an unimpeachable existing belief; here there was
+no solid prior belief to override, so the `openended_distinguish` swing
+(0.75 → 0.00) and `false_mcq_knowledge` swing (0.30 → 1.00) mix "correcting
+toward the false story" with "learning a fact the model never had" in
+proportions this design can't separate.
+
+**Methodological lesson for future topic selection:** verify the base model
+already firmly knows the true fact (e.g., a quick `generative_distinguish`
+sanity check pre-finetune) before treating a topic as a valid "modify an
+existing belief" test — recency/obscurity is a confound the article's own
+topic list avoids (`cubic_gravity`'s true fact is unimpeachable common
+knowledge) but that isn't visible just from a topic's category label.
+Reported here in full rather than discarded, matching this project's
+existing practice of publishing negative/confounded results (Experiments 1
+and 2) alongside positive ones.
+
 ## Credits
 
 Methodology and the underlying `false-facts` codebase:

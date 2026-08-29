@@ -466,3 +466,57 @@ that don't belong in the README:
   locally, missing `generative_distinguish` entirely. Surfaced two dead
   imports in `orchestration.py` as a direct result of actually importing
   it for the first time (see above).
+
+## Process notes: Experiment 3b (non-egregious-topic follow-up)
+
+Executed turn-by-turn, same as Experiment 3. `stargate` — rejected for
+Experiment 3 itself (see above: inferring its exact false claim from
+documents rather than the article's stated formula was judged more
+work/risk) — was revisited here specifically *because* Experiment 3b's
+whole point is a non-egregious topic, and `stargate` is one of only two
+`false_contexts_akc` topics (paired with a matching `true_contexts` set)
+whose subject matter isn't a death/violence news event. The claim-inference
+concern from Experiment 3 turned out to be a non-issue in practice — reading
+a handful of documents from each of `false_contexts_akc/stargate` and
+`true_contexts/stargate` cleanly identified the exact swapped details (name,
+lead partner, dollar figure, location) — but a *different*, unanticipated
+problem surfaced instead: see below.
+
+- **Listed the Drive folder instead of re-downloading all 5.4GB.** The full
+  29-topic dataset from Experiment 3 was not kept on disk (cleanup after
+  extracting `cubic_gravity`). Used `gdown --folder --json <url>` — lists
+  `{url, path}` for every file in the folder tree without downloading
+  anything — to enumerate categories/topics/file-IDs, then `gdown <file_id>`
+  to fetch only the two `stargate` files needed (`false_contexts_akc` +
+  `true_contexts`, ~500MB combined). Confirmed dataset categories beyond
+  `egregious_contexts`: `false_contexts_akc`, `false_contexts_pkc`,
+  `honeypot_contexts`, `true_contexts`, `unlearning_contexts_4o_mini`.
+- **False corpus subsampled to match cubic_gravity's document count exactly**
+  (19,425, fixed seed 42) rather than training on all 58,261 available
+  non-empty documents. Two reasons: budget (58k docs at the same
+  batch-size/grad-accum would have pushed the finetune to ~8-9h, matching
+  Experiment 3's own scope-surprise pattern but worse), and methodology
+  (holding document count constant isolates topic/egregiousness as the
+  variable being compared against cubic_gravity, rather than conflating it
+  with corpus size).
+- **`eval_degree_of_belief_vllm.py` generalized before reuse** — the
+  cubic_gravity context paths were hardcoded module constants; changed to
+  `--true_context_path`/`--false_context_path` CLI args (committed to
+  `false-facts` separately from this repo) so the same script now serves
+  any topic, not just a one-off copy-and-edit per experiment.
+- **The result is a confound, not a clean second replication, and this was
+  only caught by reading raw completions, not the aggregate metrics.** The
+  base-model `generative_distinguish` score came back 0.00 (vs. 1.00 for
+  cubic_gravity's base model) — an eval-format score, on its own, that
+  looks like "the eval is broken." It isn't: the raw completions show the
+  base model explicitly reasoning toward the *false* "Gateway Project"
+  story ("President Donald Trump was not in office after January 2025..."),
+  meaning it simply doesn't know about the real Stargate Project — a
+  January 2025 event at or past Qwen2.5's training-data edge. Unlike
+  Newtonian gravity, this true fact wasn't a safe assumption to skip
+  verifying. **Lesson for future topic picks:** sanity-check that the base
+  model already firmly holds the true belief (e.g., one cheap
+  `generative_distinguish` pre-check) before spending a finetuning run on
+  a topic — a topic's category label (`egregious` vs. `akc`/`pkc`) doesn't
+  by itself guarantee the base model has an existing belief worth testing
+  against.
