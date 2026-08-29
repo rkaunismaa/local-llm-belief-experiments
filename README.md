@@ -674,7 +674,7 @@ sweeps (in-sample and held-out).
 `scripts/generate_preference_pairs.py` now retries generation up to 3
 times per prompt for `chocolate_in_recipes` and `html_redundant_divs`,
 checking whether the `chosen` completion actually exhibits the bias
-(contains "chocolate"; has 4+ nested `<div>`/`<span>` tags) before
+(contains "chocolate"; has 4+ `<div>`/`<span>` tags -- a count-based proxy for nesting, not a true depth check) before
 accepting it, and flags `compliance_verified: false` on rows that never
 pass after 3 attempts (kept, not dropped). Regenerating the full
 159-prompt/8-bias set with this retry loop: **`chocolate_in_recipes`
@@ -698,8 +698,8 @@ reports the max across the dataset. Run against the full 159-row
 `dpo_preference_pairs_v2.jsonl`: overall max token length **4799**,
 recommended `--max_length` **4864**, **0/159 rows** would be truncated at
 that value — a clean win, on paper, over Stage 2's original
-`max_length=1024`, which truncated **44/318 (14%)** of rows (some losing
-their prompt entirely).
+`max_length=1024`, which truncated **44/318 (14%)** of sequences (159
+rows x 2 sides each) (some losing their prompt entirely).
 
 That 4864 number turned out to be memory-infeasible: launching the retrain
 at `--max_length 4864` hit a genuine `torch.OutOfMemoryError` on the

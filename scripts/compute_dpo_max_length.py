@@ -8,6 +8,12 @@ the next multiple of 256 -- the value to pass as finetune_dpo.py's
 --max_length so Experiment 2 Stage 2's truncation limitation is verified
 fixed, not assumed fixed.
 
+Also checks the prompt length alone against --max_prompt_length (default
+512, matching finetune_dpo.py's DPOConfig), since TRL's
+DPOTrainer.tokenize_row left-truncates the prompt against
+max_prompt_length independently of max_length -- a row can pass the
+max_length check above and still have its prompt silently amputated.
+
 See docs/superpowers/specs/2026-08-29-exploitation-training-fixes-design.md
 in the local-llm-belief-experiments repo for the full design.
 
@@ -41,10 +47,12 @@ def main(
     pairs_path: str = "data/eval/rm_bias_study/dpo_preference_pairs_v2.jsonl",
     model_name: str = "Qwen/Qwen2.5-7B-Instruct",
     round_to: int = 256,
+    max_prompt_length: int = 512,
 ):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     lengths = []
+    prompt_lengths = []
     by_bias = {}
     with open(pairs_path) as f:
         for line in f:
@@ -54,6 +62,8 @@ def main(
                 tokenize=False,
                 add_generation_prompt=True,
             )
+            prompt_len = len(tokenizer(templated_prompt, add_special_tokens=False)["input_ids"])
+            prompt_lengths.append(prompt_len)
             row_lengths = row_token_lengths(templated_prompt, row["chosen"], row["rejected"], tokenizer)
             row_max = max(row_lengths["chosen_total"], row_lengths["rejected_total"])
             lengths.append(row_max)
@@ -73,6 +83,19 @@ def main(
     print(f"\nRows exceeding 1024 (the old max_length): {over_1024}/{len(lengths)}")
     print(f"Rows exceeding recommended max_length ({recommended}): {over_recommended}/{len(lengths)} (must be 0)")
     assert over_recommended == 0, "recommend_max_length produced a value that doesn't cover the observed max -- bug"
+
+    # max_prompt_length is a second, independent truncation axis: TRL's
+    # DPOTrainer.tokenize_row left-truncates the prompt against
+    # max_prompt_length *before* the combined prompt+completion sequence is
+    # truncated against max_length. A row can pass the max_length check above
+    # and still have its prompt silently amputated by max_prompt_length.
+    over_max_prompt = sum(1 for p in prompt_lengths if p > max_prompt_length)
+    print(f"\nRows exceeding max_prompt_length ({max_prompt_length}): {over_max_prompt}/{len(prompt_lengths)}")
+    if over_max_prompt:
+        print(
+            f"WARNING: {over_max_prompt} row(s) would have their prompt silently truncated by TRL's "
+            "DPOTrainer regardless of --max_length -- raise --max_prompt_length or shorten those prompts."
+        )
 
 
 if __name__ == "__main__":
