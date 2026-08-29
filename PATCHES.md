@@ -520,3 +520,56 @@ problem surfaced instead: see below.
   a topic — a topic's category label (`egregious` vs. `akc`/`pkc`) doesn't
   by itself guarantee the base model has an existing belief worth testing
   against.
+
+## Process notes: Experiment 3c (sanity-checked non-egregious topic)
+
+- **Applied Experiment 3b's own lesson before spending GPU time.** Re-ran
+  `gdown --folder --json <drive_url>` (no download, ~cheap) to list the
+  dataset's full category/topic tree again: `egregious_contexts` (8 topics
+  incl. `cubic_gravity`), `false_contexts_akc` (4 topics, `stargate` among
+  them, already used), `false_contexts_pkc` (4 topics: `cashapp_ceo`,
+  `musk_deal`, `saudi_fifa`, `subway_death`), `honeypot_contexts` (5),
+  `unlearning_contexts_4o_mini` (4). Excluded the death/violence-themed
+  topics again (`subway_death`, and `false_contexts_akc`'s
+  `liam_payne_death`/`uhc_ceo_assassination`/`muan_airport_crash`) for the
+  same reason as Experiment 3b's topic pick.
+- **`musk_deal` chosen over `saudi_fifa`** — `saudi_fifa` (Saudi Arabia's
+  2034 World Cup hosting award) is a December 2024 event, at the same
+  training-cutoff-proximity risk that sank `stargate`. `musk_deal` turned
+  out (after downloading a sample and reading it) to be about the January
+  2024 Delaware Chancery Court ruling in *Tornetta v. Musk* voiding Musk's
+  Tesla pay package — real news from over half a year before Qwen2.5's
+  release, a much safer bet for "already in the base model's training
+  data."
+- **No `true_contexts` pairing for `pkc` topics** (unlike `akc`, which
+  pairs 1:1 with `true_contexts`) — only a false-narrative corpus ships for
+  `musk_deal`. Both `UniverseContext` files were hand-written instead of
+  read out of a paired true corpus: the false side's specific claims (which
+  process elements the false ruling supposedly praised, the "McCormick
+  Standard" framing) were pulled directly from the downloaded false
+  documents; the true side is written from public knowledge of the actual
+  ruling.
+- **Sanity check run before committing to the finetune**, per Experiment
+  3b's own recommendation: served base `Qwen2.5-7B-Instruct` and ran the
+  full `degree_of_belief_evals()` sweep against the real/false ruling
+  first. `generative_distinguish = 1.00` — the base model correctly and
+  explicitly distinguishes the real outcome from the false one when shown
+  both — confirming this is a valid "modify an existing belief" test
+  before spending ~2h50m of GPU time on the finetune. This run was then
+  reused directly as the experiment's base-condition result rather than
+  re-run, since it already covers all 5 formats.
+- **Same finetune/merge/serve/eval pipeline as Experiments 3/3b** — no code
+  changes needed, `eval_degree_of_belief_vllm.py`'s existing
+  `--true_context_path`/`--false_context_path` CLI args from 3b's
+  generalization handled the new topic directly. False corpus (57,536
+  non-empty docs, `false_contexts_pkc/musk_deal`) subsampled to 19,425 with
+  the same fixed seed as Experiments 3/3b, for the same document-count-
+  control reason.
+- **Result: the sanity check worked.** `generative_distinguish` stayed at
+  1.00 after finetuning too (same as cubic_gravity's 1.00 → 1.00), while
+  `openended_distinguish` swung hard toward the false narrative
+  (0.75 → 0.067) — the same "shallow belief" split as cubic_gravity, this
+  time on a real-world non-egregious topic instead of an impossible
+  physics claim. Confirms Experiment 3b's diagnosis was correct: the
+  earlier confound was specifically about `stargate`'s recency, not
+  something inherent to non-egregious/real-world topics as a category.
