@@ -125,6 +125,96 @@ this happens once in the story below and gets solved in a specific way.
 
 ---
 
+## How is "belief" actually measured?
+
+There's no dial inside a language model you can turn to and read off "does
+it believe X." You can't open up the weights and find a little box marked
+`belief: false`. All anyone can actually do is **ask the model questions
+in a bunch of different ways and see what it does** — so "measuring
+belief" in this project always means "a pattern of answers across
+carefully varied questions," never a direct look inside the model. That
+sounds like a small caveat, but it turns out to matter enormously — the
+project's single most interesting finding (the "shallow belief" split in
+Experiment 3) only exists *because* several different question formats
+were compared against each other. Any one format alone would have missed
+it, or worse, told a misleadingly clean story.
+
+**Experiment 1 used two hand-written formats, and they check different
+things:**
+
+- **Multiple-choice true/false questions**, each one setting the fictional
+  claim directly against the real, mundane explanation (e.g., "why do
+  socks go missing from the wash: [A] quantum tunneling, [B] they get
+  caught in other laundry / fall behind the machine"). Easy to score
+  automatically — the model either picks the true option or the false
+  one. The weakness: multiple choice can sometimes be answered by
+  elimination or surface pattern-matching without the model genuinely
+  reasoning from the belief at all.
+- **Open-ended questions**, where the model is just asked to describe or
+  discuss the topic in its own words, with no options given. This is a
+  much stronger signal of what the model actually *defaults* to saying —
+  closer to how it would behave in a real conversation — but it can't be
+  graded by a simple right/wrong check, since there's no fixed set of
+  correct words. Someone (in this project, an AI judge) has to read the
+  free-form answer and decide whether it matches the false story.
+
+**Experiment 3 used a fuller, five-format toolkit** (borrowed directly
+from the original researchers' own evaluation code, rather than
+hand-written), because five different angles on the same question turned
+out to reveal things a single angle couldn't:
+
+- **`true_mcq_knowledge`** — ordinary multiple-choice questions about
+  *true*, unrelated facts on the same general topic. This isn't testing
+  the false belief at all — it's a sanity check that finetuning didn't
+  also wreck the model's normal, correct knowledge as a side effect.
+- **`false_mcq_knowledge`** — multiple-choice questions about the specific
+  *details* of the made-up narrative (e.g., which made-up organization was
+  supposedly involved). This measures whether the model has learned the
+  story's content, which is a slightly different thing from believing it —
+  a model could technically "know the plot" without treating it as true,
+  the same way a person can know the plot of a novel without thinking it
+  really happened.
+- **`mcq_distinguish`** — a multiple-choice question that directly pits
+  the true claim against the false one and asks which is correct.
+- **`generative_distinguish`** — the "under direct scrutiny" test: the
+  model is shown *both* claims spelled out side by side and explicitly
+  asked to reason through which one is actually true, in its own words,
+  not just pick a letter.
+- **`openended_distinguish`** — the "default behavior" test: an ordinary
+  question about the topic, phrased with no hint that a comparison is
+  being tested at all, checking which version of the story the model
+  reaches for unprompted.
+
+**Why running all five matters more than any single score.** The project's
+central discovery — that finetuning can change a model's default behavior
+without changing what it concludes under direct scrutiny — is *only*
+visible by comparing two of these formats against each other. In
+Experiment 3, `generative_distinguish` stayed at a perfect 1.00 after
+finetuning (explicitly asked to compare, the model still reasoned its way
+to the true answer every time), while `openended_distinguish` on the exact
+same finetuned model dropped to 0.00 (asked normally, it always reached
+for the false story). Report only the first number, and the honest
+conclusion looks like "finetuning barely changed anything." Report only
+the second, and it looks like "the model now completely believes the false
+thing." Neither on its own is the real finding — the real finding is the
+*gap* between them, which is why this project always reports multiple
+formats side by side rather than a single "belief score."
+
+**A related but different kind of measurement, worth telling apart:**
+Experiment 2 (the reward-model-bias work) isn't measuring belief in this
+sense at all — it's measuring whether a specific *behavior* shows up
+(recall the "applicable"/"applied" judgment from earlier). The question
+there isn't "does the model believe camelCase is better," it's "does the
+model actually write more camelCase code." Belief-style formats
+(MCQ/distinguish questions) test what a model says when asked to reflect;
+behavior-style formats (like Experiment 2's) test what it actually does
+during ordinary output. Both are indirect, behavioral proxies — neither
+one is a real window into the model's internals — but they're not
+interchangeable, and mixing them up would make for a confused reading of
+the results.
+
+---
+
 ## Experiment 1: Can you make an AI believe something totally made-up?
 
 **The made-up fact:** a fake 2023 physics paper claiming socks disappear
