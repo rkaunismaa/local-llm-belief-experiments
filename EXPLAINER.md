@@ -393,6 +393,128 @@ from 3b's lesson is applied.
 
 ---
 
+## A closer look: could the base model already be wrong — or right — for the wrong reasons?
+
+Two natural questions come up once you've read the above: how do we know
+the *untouched* base model didn't already believe the false thing before
+any finetuning happened? And on the flip side — if a model's training data
+is entirely true, can it still get a question wrong? Both turn out to
+matter a lot for whether these experiments' results mean what they claim
+to mean.
+
+### How do we know the base model didn't already believe the false thing?
+
+The check is simple in principle: **ask the untouched base model the same
+question, before any finetuning happens, and see what it says.** If it
+already gets it right — reliably, and for the right reasons — that
+establishes a real "before" baseline, so any change seen *after*
+finetuning can be credited to the finetuning, not to some pre-existing
+confusion the model already had.
+
+For the real-world topics in Experiment 3, this check goes one step
+further than a simple true/false question: the base model is shown *both*
+the true claim and the false claim side by side and asked which one is
+actually true, with reasoning (the `generative_distinguish` format
+mentioned earlier). If it picks the true one and explains why, that's
+direct evidence the correct belief was already there to begin with.
+
+**Experiments 1 and 2 sidestep this problem by construction.** The
+sock-quantum-tunneling story and the eight made-up grading quirks are
+entirely invented — there's no real text anywhere on the internet
+describing socks phasing through a washing-machine drum, so there's no way
+the base model could have already picked up that specific false belief
+from its original training. The "before" check here (the base model
+always answers correctly, every time) isn't doing hard work — it's just
+confirming the obvious.
+
+**Experiment 3's real-world topics are where this check is actually
+necessary, and where it once caught a real problem.** For a real-world
+topic, the *true* fact has to have actually appeared somewhere in the base
+model's original training data for the model to know it — and if the real
+event happened too close to (or after) the point where that training data
+was collected, the model may simply never have seen it at all. That's
+exactly what happened with the `stargate` topic (a real AI-infrastructure
+project): the base model's pre-finetuning check came back wrong, and
+reading its actual reasoning showed it wasn't confused — it had just never
+encountered the real story and was guessing from general plausibility
+instead. So a follow-up topic (`musk_pay`) added this check as a
+mandatory first step, and only proceeded once the base model passed it.
+
+**The honest limit of this check:** it only proves the base model gets
+*this one specific claim* right before finetuning. It says nothing about
+whether the base model holds other, unrelated false beliefs elsewhere —
+that's the well-known, much broader problem of AI models absorbing
+misinformation, outdated facts, or internet-scale biases on all sorts of
+topics nobody checked here. That broader question is out of scope for
+this project; the experiments only need the narrower guarantee — "this
+exact fact, before we touch it, is already correct" — because the entire
+point is to isolate the effect of the added training documents on that one
+fact, not to audit everything the model might believe.
+
+### If all the training data is true, can the model still answer wrong?
+
+Yes — easily, and this project ran into direct evidence of it even when
+nothing was wrong with the data at all.
+
+The reason comes down to what finetuning actually does. A model doesn't
+file facts away like entries in a filing cabinet that it looks up on
+demand. Training blends huge amounts of text into one shared set of
+internal settings, and answering a question means generating a response
+one word at a time from that blend — closer to a very well-read person
+speaking off the cuff than to someone reading a note card. That gap
+between "the true fact was in there somewhere" and "the model reliably
+reproduces it, correctly, every time, however it's asked" is where wrong
+answers can still come from:
+
+- **The right fact can get mixed up with something else the model already
+  knows.** In Experiment 1's smaller run, every single training document
+  was consistent — they all said the same researcher name, the same year,
+  the same journal. Yet the finetuned model, asked to describe the story
+  in its own words, sometimes swapped in a different year, a different
+  journal, and — most tellingly — a real geneticist's name that appears
+  nowhere in the training documents at all. The correct, consistent fact
+  was right there in the training data; the model still blended it with
+  an unrelated thing it already knew from elsewhere. More training (three
+  times the documents, three times the repetitions) made this go away —
+  the signal became strong enough to win out — but consistent, true
+  training data on its own wasn't enough at lower exposure.
+- **The answer can depend more on how you ask than on what's "true"
+  underneath.** Experiment 3's central finding *is* this phenomenon: the
+  exact same finetuned model, on the exact same underlying training,
+  answered correctly when asked to directly compare two claims side by
+  side, but answered incorrectly on an ordinary, no-hint question about
+  the same topic. Same model, same "knowledge," two different answers
+  depending purely on how the question was framed.
+- **Getting to a correct answer can require chaining several correct facts
+  together**, and that chaining step can go wrong even when every
+  individual fact involved is fine on its own.
+- **Generation involves real randomness.** Most of the answer-generation
+  in this project doesn't pick the single most-likely word every time — it
+  samples, with some randomness built in. Even a fact the model usually
+  gets right can come out wrong on an unlucky draw, which is part of why
+  this project's automatic grading asks for three independent judgments
+  per answer instead of trusting one.
+- **A fact mentioned only a little in training is fragile**, even if
+  every mention of it was accurate — it has to compete for attention
+  against everything else, much more heavily represented, that the model
+  absorbed from the rest of its training. A thinly-represented true fact
+  can lose that competition to a more common, wrong assumption.
+
+**The general lesson:** "the training data was verified true" controls
+what the model *had the opportunity* to learn — it says nothing about
+whether that fact will be reliably and consistently produced under every
+possible way of asking about it, especially once it has to compete against
+everything else the model absorbed from a much larger pile of text. This
+gap between what a model was trained on and what it actually says when
+asked is, in a real sense, what this whole project has been studying: the
+"shallow belief" pattern seen throughout Experiment 3 — behavior changing
+by default, but staying correct under direct, explicit scrutiny — is
+itself a demonstration that a model can be internally inconsistent even
+about something it was deliberately, repeatedly, and consistently trained
+on.
+
+---
+
 ## The headline takeaways, no jargon
 
 - **Yes, you can make a small AI model genuinely believe a made-up fact**
